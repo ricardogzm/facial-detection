@@ -1,10 +1,13 @@
 import sys
 import cv2
 import numpy as np
-from PySide6.QtGui import QImage, QPixmap
+from joke_window import JokeWindow
+from video_window import YTVideoWindow
+import web_server
 
-# from paz.pipelines import DetectMiniXceptionFER
-from PySide6.QtCore import Signal, Slot, Qt, QThread, QTimer
+from paz.pipelines import DetectMiniXceptionFER
+from PySide6.QtGui import QImage, QPixmap
+from PySide6.QtCore import Signal, Slot, Qt, QThread, QTimer, QMutex
 from PySide6.QtWidgets import (
     QApplication,
     QWidget,
@@ -13,37 +16,64 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QLabel,
     QHBoxLayout,
+    QVBoxLayout,
 )
 
 
-class VideoThread(QThread):
+class CameraThread(QThread):
     change_pixmap_signal = Signal(np.ndarray)
+    emotion_change_signal = Signal(str)
+    detect = DetectMiniXceptionFER()
+    cap = cv2.VideoCapture(0)
+    emotion = None
 
     def __init__(self):
         super().__init__()
         self._run_flag = True
+        self._timer = QTimer(self, timeout=self._on_timeout)
+        self._timer.setTimerType(Qt.PreciseTimer)
 
-    def run(self):
-        # capture from web cam
-        cap = cv2.VideoCapture(0)
-        while self._run_flag:
-            ret, cv_img = cap.read()
-            if ret:
-                self.change_pixmap_signal.emit(cv_img)
-        # shut down capture system
-        cap.release()
+    @Slot()
+    def _on_timeout(self):
+        ret, frame = self.cap.read()
+
+        if ret:
+            detection = self.detect(frame)
+            frame = detection["image"]
+            detection_info = detection["boxes2D"]
+            if detection_info:
+                self.emotion = detection_info[0].class_name
+            else:
+                self.emotion = None
+            self.emotion_change_signal.emit(self.emotion)
+
+            # print(f"Emotion: {self.emotion}")
+
+            rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            h, w, ch = rgb_image.shape
+            bytes_per_line = ch * w
+            qImg = QImage(rgb_image.data, w, h, bytes_per_line, QImage.Format_RGB888)
+            p = qImg.scaled(640, 480, Qt.KeepAspectRatio)
+            self.change_pixmap_signal.emit(QPixmap.fromImage(p))
+
+    def start(self):
+        self._timer.start(1000 / 30)
 
     def stop(self):
-        """Sets run flag to False and waits for thread to finish"""
-        self._run_flag = False
-        self.wait()
+        self._timer.stop()
+        self.emotion_change_signal.emit(self.emotion)
+
+    def kill(self):
+        self._timer.stop()
+        self.cap.release()
+        self.quit()
 
 
 class CameraWidget(QLabel):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.resize(640, 480)
-        self.thread = VideoThread()
+        self.thread = CameraThread()
         # connect its signal to the update_image slot
         self.thread.change_pixmap_signal.connect(self.update_image)
         # start the thread
@@ -56,20 +86,94 @@ class CameraWidget(QLabel):
     @Slot(np.ndarray)
     def update_image(self, cv_img):
         """Updates the image_label with a new opencv image"""
-        qt_img = self.convert_cv_qt(cv_img)
-        self.setPixmap(qt_img)
+        self.setPixmap(cv_img)
 
-    def convert_cv_qt(self, cv_img):
-        """Convert from an opencv image to QPixmap"""
-        rgb_image = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
-        h, w, ch = rgb_image.shape
-        bytes_per_line = ch * w
-        convert_to_Qt_format = QImage(
-            rgb_image.data, w, h, bytes_per_line, QImage.Format_RGB888
-        )
-        p = convert_to_Qt_format.scaled(640, 480, Qt.KeepAspectRatio)
+    def deleteLater(self):
+        self.thread.kill()
+        super().deleteLater()
 
-        return QPixmap.fromImage(p)
+
+class VideoAndControls(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        layout = QVBoxLayout(self)
+
+        self.camera_widget = CameraWidget()
+
+        self.controls = QWidget()
+        controlsLayout = QHBoxLayout(self.controls)
+        self.pauseButton = QPushButton("Pause")
+        self.pauseButton.clicked.connect(self.pauseVideo)
+        self.resumeButtom = QPushButton("Resume")
+        self.resumeButtom.clicked.connect(self.resumeVideo)
+        controlsLayout.addWidget(self.pauseButton)
+        controlsLayout.addWidget(self.resumeButtom)
+
+        layout.addWidget(self.camera_widget)
+        layout.addWidget(self.controls)
+
+    def pauseVideo(self):
+        self.camera_widget.thread.stop()
+        print("Pause!")
+
+    def resumeVideo(self):
+        self.camera_widget.thread.start()
+        print("Resume!")
+
+
+class SidePanel(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.joke_window = None
+        self.video_window = None
+
+        layout = QVBoxLayout(self)
+
+        self.emotion_label = QLabel("Emotion:")
+        self.emotion_label.setStyleSheet("font-size: 20px;")
+        self.emotion_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self.emotion_label)
+
+        self.emotion_value = QLabel("")
+        self.emotion_value.setStyleSheet("font-size: 20px;")
+        self.emotion_value.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self.emotion_value)
+
+        self.open_joke_button = QPushButton("Open Joke")
+        self.open_joke_button.clicked.connect(self.open_joke)
+        layout.addWidget(self.open_joke_button)
+
+        self.open_video_button = QPushButton("Open Video")
+        self.open_video_button.clicked.connect(self.open_video)
+        layout.addWidget(self.open_video_button)
+
+    def open_joke(self):
+        print("Open joke!")
+        if self.joke_window is None:
+            self.joke_window = JokeWindow()
+        self.joke_window.show()
+
+    def open_video(self):
+        print("Open video!")
+        if self.video_window is None:
+            self.video_window = YTVideoWindow()
+        self.video_window.show()
+
+    def update_emotion(self, emotion):
+        self.emotion_value.setText(emotion)
+
+
+# Create a web server thread
+class WebServerThread(QThread):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+    # TODO: Improve this method
+    def run(self):
+        web_server.run()
+
+    # TODO: Add a stop method to stop the server properly
 
 
 class MainWindow(QMainWindow):
@@ -81,22 +185,25 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Emotion detection")
         self.setGeometry(300, 300, 1200, 600)
 
-        cameraWidget = CameraWidget()
-        testButton = QPushButton("Test")
-        testButton.clicked.connect(self.test)
+        self.videoAndControls = VideoAndControls()
+        self.sidePanel = SidePanel()
 
         layout = QHBoxLayout()
-        layout.addWidget(cameraWidget)
-        layout.addWidget(testButton)
+        layout.addWidget(self.videoAndControls)
+        layout.addWidget(self.sidePanel)
 
         centralWidget = QWidget()
         centralWidget.setLayout(layout)
         self.setCentralWidget(centralWidget)
 
+        self.thread = WebServerThread()
+        self.thread.start()
+
         self.show()
 
-    def test(self):
-        print("test!")
+    def closeEvent(self, event):
+        self.videoAndControls.camera_widget.deleteLater()
+        event.accept()
 
 
 if __name__ == "__main__":

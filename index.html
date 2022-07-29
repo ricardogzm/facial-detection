@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <title>Funny videos</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script>
+      // Get query parameters from URL
+      const urlParams = new URLSearchParams(window.location.search);
+      const video = urlParams.get("video");
+
+      // If video query parameter is present, play video
+      if (video) {
+        document.addEventListener("DOMContentLoaded", function () {
+          document.getElementById(
+            "ytplayer"
+          ).src = `https://www.youtube.com/embed/${video}?autoplay=1&mute=1`;
+        });
+      }
+    </script>
+    <style>
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+        padding: 0;
+      }
+
+      #ytplayer {
+        width: 100vw;
+        height: 100vh;
+      }
+    </style>
+  </head>
+  <body>
+    <iframe
+      id="ytplayer"
+      src="https://www.youtube.com/embed/sGxw7ipTrq8?autoplay=1&mute=1"
+      frameborder="0"
+      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+      allowfullscreen
+    ></iframe>
+  </body>
+</html>
