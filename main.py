@@ -45,7 +45,6 @@ class CameraThread(QThread):
                 self.emotion = detection_info[0].class_name
             else:
                 self.emotion = None
-            self.emotion_change_signal.emit(self.emotion)
 
             # print(f"Emotion: {self.emotion}")
 
@@ -130,22 +129,21 @@ class SidePanel(QWidget):
 
         layout = QVBoxLayout(self)
 
-        self.emotion_label = QLabel("Emotion:")
-        self.emotion_label.setStyleSheet("font-size: 20px;")
-        self.emotion_label.setAlignment(Qt.AlignCenter)
-        layout.addWidget(self.emotion_label)
-
-        self.emotion_value = QLabel("")
-        self.emotion_value.setStyleSheet("font-size: 20px;")
+        self.emotion_value = QLabel("Emotion: None")
+        self.emotion_value.setStyleSheet("font-size: 20px; border: 1px solid #000000;")
         self.emotion_value.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.emotion_value)
 
         self.open_joke_button = QPushButton("Open Joke")
         self.open_joke_button.clicked.connect(self.open_joke)
+        self.open_joke_button.setStyleSheet("font-size: 20px;")
+        self.open_joke_button.setEnabled(False)
         layout.addWidget(self.open_joke_button)
 
         self.open_video_button = QPushButton("Open Video")
         self.open_video_button.clicked.connect(self.open_video)
+        self.open_video_button.setStyleSheet("font-size: 20px;")
+        self.open_video_button.setEnabled(False)
         layout.addWidget(self.open_video_button)
 
     def open_joke(self):
@@ -161,7 +159,17 @@ class SidePanel(QWidget):
         self.video_window.show()
 
     def update_emotion(self, emotion):
-        self.emotion_value.setText(emotion)
+        emotion_text = f"Emotion: {emotion}"
+
+        if emotion in ("angry", "disgust", "fear", "sad"):
+            emotion_text += "\n\nIt seems you are not happy. Let's cheer you up!\nTry to watch a funny video or read a joke."
+            self.open_joke_button.setEnabled(True)
+            self.open_video_button.setEnabled(True)
+        else:
+            self.open_joke_button.setEnabled(False)
+            self.open_video_button.setEnabled(False)
+
+        self.emotion_value.setText(emotion_text)
 
 
 # Create a web server thread
@@ -187,6 +195,11 @@ class MainWindow(QMainWindow):
 
         self.videoAndControls = VideoAndControls()
         self.sidePanel = SidePanel()
+
+        # Connect the signal from the camera thread to the update_emotion slot
+        self.videoAndControls.camera_widget.thread.emotion_change_signal.connect(
+            self.sidePanel.update_emotion
+        )
 
         layout = QHBoxLayout()
         layout.addWidget(self.videoAndControls)
